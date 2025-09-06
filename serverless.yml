@@ -1,0 +1,138 @@
+# Serverless Framework configuration for YMSD Sleeper API
+# Simplified single-environment setup
+# Deploy with: serverless deploy
+
+service: ymsd-sleeper-api
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: ${opt:region, 'us-east-1'}
+  memorySize: 1024
+  timeout: 30
+  environment:
+    AWS_REGION: ${self:provider.region}
+    S3_BUCKET_NAME: ${env:S3_BUCKET_NAME, 'ymsd-football'}
+    S3_PREFIX: ${env:S3_PREFIX, 'sleeper-snapshots/'}
+    EFS_MOUNT_PATH: ${env:EFS_MOUNT_PATH, '/mnt/efs'}
+    VERSION_MANAGEMENT_SERVICE_URL: ${env:VERSION_MANAGEMENT_SERVICE_URL, ''}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:ListBucket
+            - s3:HeadObject
+          Resource:
+            - arn:aws:s3:::${env:S3_BUCKET_NAME, 'ymsd-football'}
+            - arn:aws:s3:::${env:S3_BUCKET_NAME, 'ymsd-football'}/*
+        - Effect: Allow
+          Action:
+            - elasticfilesystem:ClientMount
+            - elasticfilesystem:ClientWrite
+            - elasticfilesystem:ClientRootAccess
+          Resource: "*"
+  vpc:
+    securityGroupIds:
+      - ${env:EFS_SECURITY_GROUP_ID}
+    subnetIds:
+      - ${env:EFS_SUBNET_ID_1}
+      - ${env:EFS_SUBNET_ID_2}
+
+functions:
+  api:
+    handler: lambda_handler.lambda_handler
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+      - http:
+          path: /
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - X-Amz-Date
+              - Authorization
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+    fileSystemConfig:
+      localMountPath: /mnt/efs
+      arn: ${env:EFS_ACCESS_POINT_ARN}
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+    slim: true
+    strip: false
+    noDeps:
+      - boto3
+      - botocore
+    layer:
+      name: ${self:service}-deps
+      description: Python dependencies for YMSD Sleeper API
+      compatibleRuntimes:
+        - python3.11
+      retain: false
+
+resources:
+  Resources:
+    # API Gateway Custom Domain (optional)
+    ApiGatewayRestApi:
+      Type: AWS::ApiGateway::RestApi
+      Properties:
+        Name: ${self:service}
+        Description: YMSD Sleeper API
+        EndpointConfiguration:
+          Types:
+            - REGIONAL
+
+    # CloudWatch Log Group
+    ApiLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/${self:service}-api
+        RetentionInDays: 14
+
+  Outputs:
+    ApiUrl:
+      Description: API Gateway endpoint URL
+      Value:
+        Fn::Join:
+          - ''
+          - - https://
+            - Ref: ApiGatewayRestApi
+            - .execute-api.
+            - ${self:provider.region}
+            - .amazonaws.com/
+            - ${self:provider.stage}
+      Export:
+        Name: ${self:service}-api-url
+
+    LambdaFunctionArn:
+      Description: Lambda Function ARN
+      Value:
+        Fn::GetAtt:
+          - ApiLambdaFunction
+          - Arn
+      Export:
+        Name: ${self:service}-lambda-arn

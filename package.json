@@ -1,0 +1,38 @@
+{
+  "name": "ymsd-sleeper-api",
+  "version": "1.0.0",
+  "description": "YMSD Sleeper API - FastAPI application for fantasy football data",
+  "main": "lambda_handler.py",
+  "scripts": {
+    "deploy": "./deploy.sh",
+    "deploy:infrastructure": "./infrastructure/deploy-infrastructure.sh",
+    "test": "python -m pytest tests/",
+    "lint": "flake8 .",
+    "format": "black .",
+    "local": "python main.py"
+  },
+  "dependencies": {
+    "serverless": "^3.38.0",
+    "serverless-python-requirements": "^6.0.0"
+  },
+  "devDependencies": {
+    "serverless-offline": "^13.3.0"
+  },
+  "keywords": [
+    "fastapi",
+    "aws-lambda",
+    "fantasy-football",
+    "sleeper-api",
+    "serverless"
+  ],
+  "author": "YMSD Sleeper App Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/ymsd-sleeper-app.git"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "python": ">=3.11.0"
+  }
+}

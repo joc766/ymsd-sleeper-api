@@ -1,0 +1,188 @@
+# CloudFormation template for YMSD Sleeper API infrastructure
+# Simplified single-environment setup
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'YMSD Sleeper API Infrastructure - EFS, Security Groups, and supporting resources'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where the EFS will be created
+  
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of subnet IDs for EFS mount targets (at least 2 for high availability)
+  
+  AllowedCidrBlocks:
+    Type: CommaDelimitedList
+    Default: 10.0.0.0/8
+    Description: CIDR blocks allowed to access the EFS
+
+Resources:
+  # Security Group for EFS
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: ymsd-sleeper-efs-sg
+      GroupDescription: Security group for YMSD Sleeper EFS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+          Description: NFS access from Lambda functions
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Join [',', !Ref AllowedCidrBlocks]
+          Description: NFS access from allowed CIDR blocks
+      Tags:
+        - Key: Name
+          Value: ymsd-sleeper-efs-sg
+        - Key: Project
+          Value: ymsd-sleeper-api
+
+  # Security Group for Lambda functions
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: ymsd-sleeper-lambda-sg
+      GroupDescription: Security group for YMSD Sleeper Lambda functions
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: ymsd-sleeper-lambda-sg
+        - Key: Project
+          Value: ymsd-sleeper-api
+
+  # EFS File System
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: ymsd-sleeper-cache
+        - Key: Project
+          Value: ymsd-sleeper-api
+      PerformanceMode: generalPurpose
+      ThroughputMode: provisioned
+      ProvisionedThroughputInMibps: 100
+      Encrypted: true
+      KmsKeyId: alias/aws/elasticfilesystem
+
+  # EFS Access Point
+  EfsAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: 1000
+        Gid: 1000
+      RootDirectory:
+        Path: /cache
+        CreationInfo:
+          OwnerUid: 1000
+          OwnerGid: 1000
+          Permissions: '755'
+
+  # EFS Mount Targets (one per subnet for high availability)
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Select [0, !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Select [1, !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ymsd-sleeper-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:HeadObject
+                Resource:
+                  - 'arn:aws:s3:::ymsd-football'
+                  - 'arn:aws:s3:::ymsd-football/*'
+        - PolicyName: EfsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: ymsd-sleeper-lambda-role
+        - Key: Project
+          Value: ymsd-sleeper-api
+
+Outputs:
+  EfsFileSystemId:
+    Description: EFS File System ID
+    Value: !Ref EfsFileSystem
+    Export:
+      Name: ymsd-sleeper-EfsFileSystemId
+
+  EfsAccessPointArn:
+    Description: EFS Access Point ARN
+    Value: !GetAtt EfsAccessPoint.Arn
+    Export:
+      Name: ymsd-sleeper-EfsAccessPointArn
+
+  EfsSecurityGroupId:
+    Description: EFS Security Group ID
+    Value: !Ref EfsSecurityGroup
+    Export:
+      Name: ymsd-sleeper-EfsSecurityGroupId
+
+  LambdaSecurityGroupId:
+    Description: Lambda Security Group ID
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: ymsd-sleeper-LambdaSecurityGroupId
+
+  LambdaExecutionRoleArn:
+    Description: Lambda Execution Role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: ymsd-sleeper-LambdaExecutionRoleArn
+
+  S3BucketName:
+    Description: S3 Bucket Name for database snapshots (existing bucket)
+    Value: 'ymsd-football'
+    Export:
+      Name: ymsd-sleeper-S3BucketName
